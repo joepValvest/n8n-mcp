@@ -434,12 +434,21 @@ class SingleSessionHTTPServer {
     }
     async resetSessionSSE(res) {
         if (this.session) {
+            const sessionId = this.session.sessionId;
+            logger_1.logger.info('Closing previous session for SSE', { sessionId });
+            if (this.session.server && typeof this.session.server.close === 'function') {
+                try {
+                    await this.session.server.close();
+                }
+                catch (serverError) {
+                    logger_1.logger.warn('Error closing server for SSE session', { sessionId, error: serverError });
+                }
+            }
             try {
-                logger_1.logger.info('Closing previous session for SSE', { sessionId: this.session.sessionId });
                 await this.session.transport.close();
             }
-            catch (error) {
-                logger_1.logger.warn('Error closing previous session:', error);
+            catch (transportError) {
+                logger_1.logger.warn('Error closing transport for SSE session', { sessionId, error: transportError });
             }
         }
         try {
@@ -529,8 +538,8 @@ class SingleSessionHTTPServer {
                     },
                     mcp: {
                         url: endpoints.mcp,
-                        method: 'GET/POST',
-                        description: 'MCP endpoint - GET for info, POST for JSON-RPC'
+                        method: 'POST',
+                        description: 'MCP endpoint - POST for JSON-RPC (StreamableHTTP transport). SSE transport is disabled.'
                     }
                 },
                 authentication: {
@@ -568,7 +577,7 @@ class SingleSessionHTTPServer {
                 },
                 activeTransports: activeTransports.length,
                 activeServers: activeServers.length,
-                legacySessionActive: !!this.session,
+                sseDisabled: true,
                 memory: {
                     used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
                     total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
@@ -619,22 +628,18 @@ class SingleSessionHTTPServer {
             }
             const accept = req.headers.accept;
             if (accept && accept.includes('text/event-stream')) {
-                logger_1.logger.info('SSE stream request received - establishing SSE connection');
-                try {
-                    await this.resetSessionSSE(res);
-                    logger_1.logger.info('SSE connection established successfully');
-                }
-                catch (error) {
-                    logger_1.logger.error('Failed to establish SSE connection:', error);
-                    res.status(500).json({
-                        jsonrpc: '2.0',
-                        error: {
-                            code: -32603,
-                            message: 'Failed to establish SSE connection'
-                        },
-                        id: null
-                    });
-                }
+                logger_1.logger.warn('SSE transport request rejected - SSE is disabled, use StreamableHTTP (POST /mcp) instead', {
+                    ip: req.ip,
+                    userAgent: req.get('user-agent')
+                });
+                res.status(400).json({
+                    jsonrpc: '2.0',
+                    error: {
+                        code: -32000,
+                        message: 'SSE transport is disabled. Use StreamableHTTP transport by sending POST requests to /mcp with JSON-RPC body. SSE only supports single-session mode which causes connection issues with multiple clients.'
+                    },
+                    id: null
+                });
                 return;
             }
             if (process.env.N8N_MODE === 'true') {
@@ -655,11 +660,15 @@ class SingleSessionHTTPServer {
             res.json({
                 description: 'n8n Documentation MCP Server',
                 version: version_1.PROJECT_VERSION,
+                transport: {
+                    type: 'StreamableHTTP',
+                    note: 'SSE transport is disabled. Use POST /mcp with JSON-RPC body for all MCP communication.'
+                },
                 endpoints: {
                     mcp: {
                         method: 'POST',
                         path: '/mcp',
-                        description: 'Main MCP JSON-RPC endpoint',
+                        description: 'Main MCP JSON-RPC endpoint (StreamableHTTP transport)',
                         authentication: 'Bearer token required'
                     },
                     health: {
