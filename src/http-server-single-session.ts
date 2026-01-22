@@ -825,8 +825,8 @@ export class SingleSessionHTTPServer {
           },
           mcp: {
             url: endpoints.mcp,
-            method: 'GET/POST',
-            description: 'MCP endpoint - GET for info, POST for JSON-RPC'
+            method: 'POST',
+            description: 'MCP endpoint - POST for JSON-RPC (StreamableHTTP transport). SSE transport is disabled.'
           }
         },
         authentication: {
@@ -867,7 +867,7 @@ export class SingleSessionHTTPServer {
         },
         activeTransports: activeTransports.length, // Legacy field
         activeServers: activeServers.length, // Legacy field
-        legacySessionActive: !!this.session, // For SSE compatibility
+        sseDisabled: true, // SSE transport disabled for multi-session support
         memory: {
           used: Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
           total: Math.round(process.memoryUsage().heapTotal / 1024 / 1024),
@@ -920,7 +920,8 @@ export class SingleSessionHTTPServer {
       res.json(testResponse);
     });
 
-    // MCP information endpoint (no auth required for discovery) and SSE support
+    // MCP information endpoint (no auth required for discovery)
+    // SSE transport is DISABLED - use StreamableHTTP (POST /mcp) for multi-session support
     app.get('/mcp', async (req, res) => {
       // Handle StreamableHTTP transport requests with new pattern
       const sessionId = req.headers['mcp-session-id'] as string | undefined;
@@ -934,27 +935,26 @@ export class SingleSessionHTTPServer {
           // Fall through to standard response
         }
       }
-      
-      // Check Accept header for text/event-stream (SSE support)
+
+      // Check Accept header for text/event-stream (SSE support - DISABLED)
+      // SSE is disabled because it only supports single-session mode which causes
+      // session thrashing when multiple clients try to connect simultaneously.
+      // Use StreamableHTTP transport (POST /mcp) instead for proper multi-session support.
       const accept = req.headers.accept;
       if (accept && accept.includes('text/event-stream')) {
-        logger.info('SSE stream request received - establishing SSE connection');
-        
-        try {
-          // Create or reset session for SSE
-          await this.resetSessionSSE(res);
-          logger.info('SSE connection established successfully');
-        } catch (error) {
-          logger.error('Failed to establish SSE connection:', error);
-          res.status(500).json({
-            jsonrpc: '2.0',
-            error: {
-              code: -32603,
-              message: 'Failed to establish SSE connection'
-            },
-            id: null
-          });
-        }
+        logger.warn('SSE transport request rejected - SSE is disabled, use StreamableHTTP (POST /mcp) instead', {
+          ip: req.ip,
+          userAgent: req.get('user-agent')
+        });
+
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: 'SSE transport is disabled. Use StreamableHTTP transport by sending POST requests to /mcp with JSON-RPC body. SSE only supports single-session mode which causes connection issues with multiple clients.'
+          },
+          id: null
+        });
         return;
       }
 
@@ -987,11 +987,15 @@ export class SingleSessionHTTPServer {
       res.json({
         description: 'n8n Documentation MCP Server',
         version: PROJECT_VERSION,
+        transport: {
+          type: 'StreamableHTTP',
+          note: 'SSE transport is disabled. Use POST /mcp with JSON-RPC body for all MCP communication.'
+        },
         endpoints: {
           mcp: {
             method: 'POST',
             path: '/mcp',
-            description: 'Main MCP JSON-RPC endpoint',
+            description: 'Main MCP JSON-RPC endpoint (StreamableHTTP transport)',
             authentication: 'Bearer token required'
           },
           health: {
