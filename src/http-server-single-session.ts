@@ -1074,12 +1074,16 @@ export class SingleSessionHTTPServer {
     });
 
 
-    // SECURITY: Rate limiting for authentication endpoint
-    // Prevents brute force attacks and DoS
+    // SECURITY: Rate limiting for failed authentication attempts only
+    // Prevents brute force attacks while allowing legitimate MCP traffic
     // See: https://github.com/czlonkowski/n8n-mcp/issues/265 (HIGH-02)
+    //
+    // Note: This limiter only counts FAILED auth attempts (via skipSuccessfulRequests).
+    // Authenticated requests flow freely to support normal MCP session traffic.
     const authLimiter = rateLimit({
       windowMs: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW || '900000'), // 15 minutes
-      max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '20'), // 20 authentication attempts per IP
+      max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '50'), // 50 failed auth attempts per IP
+      skipSuccessfulRequests: true, // Only count failed requests toward the limit
       message: {
         jsonrpc: '2.0',
         error: {
@@ -1100,7 +1104,7 @@ export class SingleSessionHTTPServer {
           jsonrpc: '2.0',
           error: {
             code: -32000,
-            message: 'Too many authentication attempts'
+            message: 'Too many failed authentication attempts'
           },
           id: null
         });

@@ -742,7 +742,8 @@ class SingleSessionHTTPServer {
         });
         const authLimiter = (0, express_rate_limit_1.default)({
             windowMs: parseInt(process.env.AUTH_RATE_LIMIT_WINDOW || '900000'),
-            max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '20'),
+            max: parseInt(process.env.AUTH_RATE_LIMIT_MAX || '50'),
+            skipSuccessfulRequests: true,
             message: {
                 jsonrpc: '2.0',
                 error: {
@@ -763,7 +764,7 @@ class SingleSessionHTTPServer {
                     jsonrpc: '2.0',
                     error: {
                         code: -32000,
-                        message: 'Too many authentication attempts'
+                        message: 'Too many failed authentication attempts'
                     },
                     id: null
                 });
